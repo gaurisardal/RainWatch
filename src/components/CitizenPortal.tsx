@@ -24,6 +24,18 @@ interface CitizenPortalProps {
   ) => Promise<CitizenReport>;
 }
 
+// Distance between two coordinates in meters (used to count nearby reports)
+const distanceMeters = (lat1: number, lng1: number, lat2: number, lng2: number) => {
+  const R = 6371000;
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+};
+
 export const CitizenPortal: React.FC<CitizenPortalProps> = ({
   locations,
   forecasts,
@@ -38,6 +50,21 @@ export const CitizenPortal: React.FC<CitizenPortalProps> = ({
   const [showReports, setShowReports] = useState(true);
   const [showIncidents, setShowIncidents] = useState(true);
   const [selectedCoord, setSelectedCoord] = useState<{ lat: number; lng: number } | null>(null);
+
+  // Which tab is open in the Public Waterlogging Feed
+  const [feedTab, setFeedTab] = useState<'forecast' | 'reports'>('forecast');
+
+  // Forecast list for citizens: highest risk first, with nearby report count (~500m)
+  const forecastItems = locations
+    .map((loc) => ({
+      loc,
+      forecast: forecasts[loc.id],
+      nearby: citizenReports.filter(
+        (r) => distanceMeters(loc.lat, loc.lng, r.lat, r.lng) <= 500
+      ).length,
+    }))
+    .filter((item) => item.forecast)
+    .sort((a, b) => b.forecast.score - a.forecast.score);
 
   const handleMapLocationSelect = (lat: number, lng: number) => {
     setSelectedCoord({ lat, lng });
@@ -92,7 +119,7 @@ export const CitizenPortal: React.FC<CitizenPortalProps> = ({
           onSubmitReport={onSubmitReport}
         />
 
-        {/* Right Column: Route Warnings (DEMO DATA) & My Reports */}
+        {/* Right Column: Route Warnings (DEMO DATA) & Public Feed */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
           {/* Route Warnings */}
           <div className="rw-card">
@@ -156,18 +183,109 @@ export const CitizenPortal: React.FC<CitizenPortalProps> = ({
             </div>
           </div>
 
-          {/* Citizen Reports List with Statuses */}
+          {/* Public Waterlogging Feed: Forecast + Citizen Reports */}
           <div className="rw-card">
             <div className="rw-card-header">
               <div className="rw-card-title">
                 <Clock size={18} color="#6366f1" />
                 <span>Public Waterlogging Feed</span>
               </div>
-              <span className="rw-badge rw-badge-report">{citizenReports.length} Reports</span>
+              <span className="rw-badge rw-badge-report">
+                {feedTab === 'forecast'
+                  ? `${forecastItems.length} Locations`
+                  : `${citizenReports.length} Reports`}
+              </span>
+            </div>
+
+            {/* Tabs */}
+            <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem' }}>
+              <button
+                type="button"
+                className={`rw-btn rw-btn-sm ${feedTab === 'forecast' ? 'rw-btn-primary' : 'rw-btn-secondary'}`}
+                onClick={() => setFeedTab('forecast')}
+              >
+                Forecast
+              </button>
+              <button
+                type="button"
+                className={`rw-btn rw-btn-sm ${feedTab === 'reports' ? 'rw-btn-primary' : 'rw-btn-secondary'}`}
+                onClick={() => setFeedTab('reports')}
+              >
+                Citizen Reports
+              </button>
             </div>
 
             <div style={{ maxHeight: '380px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
-              {citizenReports.length === 0 ? (
+              {feedTab === 'forecast' ? (
+                <>
+                  <div
+                    style={{
+                      fontSize: '0.72rem',
+                      color: '#64748b',
+                      background: '#f8fafc',
+                      padding: '0.4rem 0.6rem',
+                      borderRadius: '4px',
+                      border: '1px solid #e2e8f0',
+                    }}
+                  >
+                    Predicted risk (demo estimates), not confirmed waterlogging. Decision-support prototype, not an official emergency service.
+                  </div>
+
+                  {forecastItems.length === 0 ? (
+                    <div style={{ fontSize: '0.825rem', color: '#64748b', textAlign: 'center', padding: '1rem' }}>
+                      No forecast data available right now.
+                    </div>
+                  ) : (
+                    forecastItems.map(({ loc, forecast, nearby }) => (
+                      <div
+                        key={loc.id}
+                        style={{
+                          border: '1px solid var(--color-border)',
+                          borderRadius: '6px',
+                          padding: '0.65rem',
+                          background: '#ffffff',
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.25rem' }}>
+                          <span style={{ fontWeight: 700, fontSize: '0.825rem', color: 'var(--navy-900)' }}>
+                            {loc.name}
+                          </span>
+                          <span
+                            className={`rw-badge ${
+                              forecast.category === 'high'
+                                ? 'rw-badge-high'
+                                : forecast.category === 'moderate'
+                                ? 'rw-badge-mod'
+                                : 'rw-badge-low'
+                            }`}
+                          >
+                            {forecast.score}/100 Predicted
+                          </span>
+                        </div>
+
+                        <div style={{ fontSize: '0.7rem', color: '#64748b' }}>
+                          {loc.area} | {loc.elevationProfile}
+                        </div>
+
+                        <p style={{ fontSize: '0.775rem', color: '#475569', margin: '0.3rem 0' }}>
+                          <b>Drainage:</b> {forecast.contributingFactors.drainage}
+                        </p>
+
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: '#64748b' }}>
+                          <span>
+                            ~{forecast.rainfallEstimateMm}mm rain (±{forecast.uncertaintyMargin}%)
+                          </span>
+                          <span>
+                            {nearby > 0
+                              ? `📢 ${nearby} report${nearby > 1 ? 's' : ''} nearby`
+                              : '0 reports nearby'}
+                          </span>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </>
+              ) : citizenReports.length === 0 ? (
                 <div style={{ fontSize: '0.825rem', color: '#64748b', textAlign: 'center', padding: '1rem' }}>
                   No citizen reports submitted yet. Use the form to submit one!
                 </div>
